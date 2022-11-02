@@ -1,211 +1,172 @@
-// demo: CAN-BUS Shield, receive data with check mode
-// send data coming to fast, such as less than 10ms, you can use this way
-// loovee, 2014-6-13
+#include <TimerOne.h>
 #include <SPI.h>
-#include <SoftwareSerial.h>
-
-SoftwareSerial Nextion(0,1); //rx, tx
-
 #define CAN_2515
-// #define CAN_2518FD
 
-// Set SPI CS Pin according to your hardware
-
-#if defined(SEEED_WIO_TERMINAL) && defined(CAN_2518FD)
-// For Wio Terminal w/ MCP2518FD RPi Hat：
-// Channel 0 SPI_CS Pin: BCM 8
-// Channel 1 SPI_CS Pin: BCM 7
-// Interupt Pin: BCM25
-const int SPI_CS_PIN  = BCM8;
-const int CAN_INT_PIN = BCM25;
-#else
-
-// For Arduino MCP2515 Hat:
-// the cs pin of the version after v1.1 is default to D9
-// v0.9b and v1.0 is default D10
 const int SPI_CS_PIN = 10;
 const int CAN_INT_PIN = 2;
-#endif
-
-
-#ifdef CAN_2518FD
-#include "mcp2518fd_can.h"
-mcp2518fd CAN(SPI_CS_PIN); // Set CS pin
-#endif
-
 #ifdef CAN_2515
 #include "mcp2515_can.h"
 mcp2515_can CAN(SPI_CS_PIN); // Set CS pin
-#endif         
-
-//CAN ID 0x0CF00500                       0x0CF00400
-//                     byte parameters
-//    0   system status 1               unidentified
-//    1   system status 2               Driver's Torque Demand
-//    2   Bus Speed                     Engine Percentage Torque (Actual)
-//    3   Motor Temperature             Engine Speed
-//    4   Inverter Temperature          Engine Speed
-//    5   SoC Battery                   Source Adress
-//    6   Battery Temperature           Unidentified
-//    7   Unidentified                  Unidentified
+#endif
 
 //Int Variable
-int sp;
-int mtr;
-int soc;
+volatile int sp;  //Speed
+volatile int mtr; //RPM
+volatile int soc; //Battery SoC
+
+int Hb;  //High Beam
+int Lb;  //Low Beam
+
+volatile bool FDoor; //Front Door
+volatile bool LRear; //Left Rear Door
+volatile bool RRear; //Right Rear Door
+
+volatile bool RvLamp; //Reverse Lamp
+volatile bool BrLamp; //Brake Lamp
+
+volatile bool gear; //Gear
+
+int Pbar1; //Pressure Bar 1
+int Pbar2; //Pressure Bar 2
+
+int speedo;
+int range;
+int accu1;
+int accu2;
+
+int i = 2;
+int rpm;
+int rpm2;
+int bar2;
 
 int x;
+int y;
+int z;
+int gr_mode;
 
-const uint32_t myMask   = 0x0CFFFFFF;
-const uint32_t myFilter = 0x0CF00500;
+//int odo;
+int akcu;
+//int sim;
+int ak;
+int Pb2;
 
+unsigned char pm1;
+unsigned char pm2;
+int bat2;
+
+bool belt;
+
+bool gr;
+bool sign;
+bool bem;
+bool Hbem;
+bool Lbem;
+
+String f;
+String btty;
+String bus_spd;
+String temper;
+String rover;
+String akbat;
+String pb;
+String bat_temp;
+String rpm_avg;
+
+bool Lsen;
+bool Rsen;
+bool bt1;      //Gear Indicator
+bool bt2;
+bool bt3;
+bool hnd_brk;  //Hand Brake
+bool ft_brk;   //Foot Brake
+bool blt;      //Sheat Belt
+bool mode;
+bool FckDoor;
+
+bool Fdoor;
+bool Ldoor;
+
+int bar;
+int aki;
+double sim;
+int odo = 0;
+int bar0;
+int bar1;
+
+int park = 14;
+
+int bat_num;
+
+unsigned char len = 0;
+unsigned char buf[8];
+
+unsigned long  canId;
+
+double tampungodo;
 
 void setup() {
-    //Nextion.begin(9600);
+  Serial.begin(115200);
 
-    Serial.begin(115200);
-    
-    while (CAN_OK != CAN.begin(CAN_250KBPS)) {             // init can bus : baudrate = 500k
-        Serial.println("CAN init fail, retry...");
-        delay(100);
-    }
+  while (CAN_OK != CAN.begin(CAN_250KBPS)) {             // init can bus : baudrate = 500k
+    Serial.println("CAN init fail, retry...");
+    delay(100);
+  }
+  pinMode(CAN_INT_PIN, INPUT);
+  Serial.println("CAN init ok!");
 
-   
-   pinMode(CAN_INT_PIN, INPUT);
-   Serial.println("CAN init ok!");
-
-    CAN.init_Mask(0, 1, myMask);
-    CAN.init_Filt(0, 1, 0x0CF00500);
-
-    CAN.init_Mask(1, 1, myMask);
-    CAN.init_Filt(1, 1, 0x0CF00400);
-
+  mask_filt();
 }
-
 
 void loop() {
-    unsigned char len = 0;
-    unsigned char buf[8];
-
+  while (odo < 9999999) {
     if (CAN_MSGAVAIL == CAN.checkReceive()) {         // check if data coming
-        CAN.readMsgBuf(&len, buf);    // read data,  len: data length, buf: data buf
+      CAN.readMsgBuf(&len, buf);    // read data,  len: data length, buf: data buf
 
-        unsigned long canId = CAN.getCanId();
+      canId = CAN.getCanId();
 
-    Serial.println("Masuk2");
+      switch (canId) {
+          case 0x0CF00500:   //Engine Speed, Motor Temp, ETC
+            bus_spd1();
+          break;
 
-      if (canId == 0x0CF00500){
-   //       Serial.print(canId, HEX);
-   //       Serial.print(",");
+           case 0x0CF00400:   //Engine RPM
+            rpm_spd();
+          break;
 
+           case 0x18F104F3:   //Battery Temperature
+            bat_temper();
+          break;
+
+          case 0x0D000020:   //Engine RPM
+            Light_Belts();
+          break;
+
+          case 0x0D000022:   //Engine RPM
+            bat_accu();
+          break;
+
+          case 0x0D000023:   //Engine RPM
+            Pbar();
+          break;
+      }
+       
+       Serialcom();
+
+ 
+      
+     sim = (x*0.000278) + tampungodo;
+     //sim = (4.3/x);
      
       
-   //   Serial.print(buf[3], DEC); //Motor Temp
-   //   Serial.print(",");
-   //   Serial.print(buf[5], DEC); //Battery SoC
-   //   Serial.print(","); 
-   //  Serial.print(buf[2], DEC); //Bus Speed
-   //  Serial.print(",");
+      Serial.print("od.txt=\"");
+      Serial.print(sim);
+      Serial.print("\"");
+      Serial.write(0xff);
+      Serial.write(0xff);
+      Serial.write(0xff);
 
-      //Change to Decimals by int
+      tampungodo = sim;
 
-      sp = buf[2], DEC;
-      mtr = buf[3], DEC;
-      soc = buf[5], DEC;
-
-      x = (int)sp; 
-      int y = (int)mtr;
-      int z = (int)soc;
-
-      //Convert to Strings for some of the variables      
-      String bus_spd = String(x);
-
-          //NEXTION
-          
-     // Nextion.print("pTemp.val=");
-     // Nextion.print(y);
-     // Nextion.write(0xff);
-     // Nextion.write(0xff);
-     // Nextion.write(0xff);
-
-    //  Nextion.print("pBatt.val=");
-    //  Nextion.print(z);
-    //  Nextion.write(0xff);
-    //  Nextion.write(0xff);
-    //  Nextion.write(0xff);
-
-    //  Nextion.print("tSpeed.txt=");
-    //  Nextion.print("\"");
-    //  Nextion.print(bus_spd);
-    //  Nextion.print("\"");
-    //  Nextion.write(0xff);
-    //  Nextion.write(0xff);
-    //  Nextion.write(0xff);
-
-      //Serial.print("pTemp.val=");
-      //Serial.print(y);
-      //Serial.write(0xff);
-      //Serial.write(0xff);
-      //Serial.write(0xff);
-
-      //Serial.print("pBatt.val=");
-      //Serial.print(z);
-      //Serial.write(0xff);
-      //Serial.write(0xff);
-      //Serial.write(0xff);
-
-      //Serial.print("tSpeed.txt=");
-      //Serial.print("\"");
-      //Serial.print(bus_spd);
-      //Serial.print("\"");
-      //Serial.write(0xff);
-      //Serial.write(0xff);
-      //Serial.write(0xff);
-
-      //Print ALL the CAN ID, DLC, and DATA
-          
-      //SERIAL_PORT_MONITOR.print(engine); 
-      //SERIAL_PORT_MONITOR.print(",");
-      //SERIAL_PORT_MONITOR.print(battery);
-      //SERIAL_PORT_MONITOR.print(",");
-      //SERIAL_PORT_MONITOR.print(temp);
-          
-          
-         // SERIAL_PORT_MONITOR.print(buf[2], DEC);  //Bus Speed
-         // SERIAL_PORT_MONITOR.print(",");
-         // SERIAL_PORT_MONITOR.print(buf[5], DEC);  //Battery SoC
-         // SERIAL_PORT_MONITOR.print(",");
-         // SERIAL_PORT_MONITOR.print(buf[3], DEC);  //Motor Temperature
-         // SERIAL_PORT_MONITOR.print("\t");
-         }
-         Serial.println();
-      
-
-      // if (canId == 0x0CF00400){
-         // Serial.print(canId, HEX);
-         // Serial.print(",");
-            
-         // Serial.println();
-     // }
-      
-
-        Serial.println("-----------------------------");
-        Serial.print("Get data from ID: 0x");
-        Serial.println(canId, HEX);
-
-        for (int i = 0; i < len; i++) { // print the data
-            Serial.print(buf[i], HEX);
-            Serial.print("\t");
-        }
-        Serial.println();
-
-        
     }
-
+  }
 }
-
-
-
-/*********************************************************************************************************
-    END FILE
-*********************************************************************************************************/
