@@ -1,5 +1,7 @@
-#include <TimerOne.h>
+#include <EEPROM.h>
 #include <SPI.h>
+//#include <avr/wdt.h>
+
 #define CAN_2515
 
 const int SPI_CS_PIN = 10;
@@ -14,35 +16,40 @@ volatile int sp;  //Speed
 volatile int mtr; //RPM
 volatile int soc; //Battery SoC
 
-int Hb;  //High Beam
-int Lb;  //Low Beam
+volatile int Hb;  //High Beam
+volatile int Lb;  //Low Beam
 
-volatile bool FDoor; //Front Door
-volatile bool LRear; //Left Rear Door
-volatile bool RRear; //Right Rear Door
+bool FDoor; //Front Door
+bool LRear; //Left Rear Door
+bool RRear; //Right Rear Door
 
-volatile bool RvLamp; //Reverse Lamp
-volatile bool BrLamp; //Brake Lamp
+bool RvLamp; //Reverse Lamp
+bool BrLamp; //Brake Lamp
 
-volatile bool gear; //Gear
+bool gear; //Gear
 
-int Pbar1; //Pressure Bar 1
-int Pbar2; //Pressure Bar 2
+volatile int Pbar1; //Pressure Bar 1
+volatile int Pbar2; //Pressure Bar 2
 
-int speedo;
-int range;
-int accu1;
-int accu2;
+volatile int speedo;
+volatile int range;
+volatile int accu1;
+volatile int accu2;
 
 int i = 2;
 int rpm;
 int rpm2;
 int bar2;
+int speed_val;
 
-int x;
-int y;
-int z;
-int gr_mode;
+volatile int x;
+volatile int y;
+volatile int z;
+volatile int gr_mode;
+volatile int cool;
+
+int motor_temp;
+int cool_temp;
 
 //int odo;
 int akcu;
@@ -86,16 +93,46 @@ bool FckDoor;
 bool Fdoor;
 bool Ldoor;
 
+int gu;
+int counter;
+
 int bar;
 int aki;
 double sim;
-int odo = 0;
+//int sim;
+
+unsigned int odo;
+
 int bar0;
 int bar1;
+int batcar;
 
 int park = 14;
 
 int bat_num;
+
+int er_bat;
+int er_hard;
+int er_oth;
+
+//Battery Fault code
+int erby1;
+int erby2;
+int erby3;
+int erby4;
+
+//Hardware Fault code;
+int erby5;
+int erby6;
+
+//Other Fault Code
+int erby7;
+
+byte counH;
+byte counL;
+
+byte odoH;
+byte odoL;
 
 unsigned char len = 0;
 unsigned char buf[8];
@@ -103,9 +140,16 @@ unsigned char buf[8];
 unsigned long  canId;
 
 double tampungodo;
+//int tampungodo;
+
+int s;
+
+unsigned long startMillis;
+unsigned long currentMillis;
+const unsigned long period = 1000;
 
 void setup() {
-  Serial.begin(115200);
+  Serial.begin(250000);
 
   while (CAN_OK != CAN.begin(CAN_250KBPS)) {             // init can bus : baudrate = 500k
     Serial.println("CAN init fail, retry...");
@@ -114,10 +158,20 @@ void setup() {
   pinMode(CAN_INT_PIN, INPUT);
   Serial.println("CAN init ok!");
 
-  mask_filt();
-}
+  //mask_filt();
 
+  odoH = EEPROM.read(0);
+  odoL = EEPROM.read(1);
+
+  tampungodo = word(odoH, odoL);
+
+  startMillis = millis();
+
+  //wdt_enable(WDTO_2S);
+}
+ 
 void loop() {
+
   while (odo < 9999999) {
     if (CAN_MSGAVAIL == CAN.checkReceive()) {         // check if data coming
       CAN.readMsgBuf(&len, buf);    // read data,  len: data length, buf: data buf
@@ -125,48 +179,75 @@ void loop() {
       canId = CAN.getCanId();
 
       switch (canId) {
-          case 0x0CF00500:   //Engine Speed, Motor Temp, ETC
-            bus_spd1();
+        case 0x0CF00500:   //Engine Speed, Motor Temp, ETC
+          bus_spd1();
           break;
 
-           case 0x0CF00400:   //Engine RPM
-            rpm_spd();
+        case 0x0CF00400:   //Engine RPM
+          rpm_spd();
           break;
 
-           case 0x18F104F3:   //Battery Temperature
-            bat_temper();
+        case 0x18F104F3:   //Battery Temperature
+          bat_temper();
           break;
 
-          case 0x0D000020:   //Engine RPM
-            Light_Belts();
+        case 0x0D000020:   //High and Low Beam, Safety Belt
+          Light_Belts();
           break;
 
-          case 0x0D000022:   //Engine RPM
-            bat_accu();
+        case 0x0D000022:   //Car Battery
+          bat_accu();
           break;
 
-          case 0x0D000023:   //Engine RPM
-            Pbar();
+        case 0x0D000023:   //Pressure Bar
+          Pbar();
+          break;
+
+        case 0x18F108F3:   //Error Code
+          error();
           break;
       }
-       
-       Serialcom();
 
- 
-      
-     sim = (x*0.000278) + tampungodo;
-     //sim = (4.3/x);
-     
-      
-      Serial.print("od.txt=\"");
-      Serial.print(sim);
-      Serial.print("\"");
-      Serial.write(0xff);
-      Serial.write(0xff);
-      Serial.write(0xff);
+      Serialcom();
 
-      tampungodo = sim;
+      /* currentMillis = millis();
+        if (currentMillis - startMillis >= period){
+         // sim = (x*0.000278) + tampungodo;
+         //sim = (4.3/x);
+         // sim = (x*3600) + tampungodo;
+         //sim = ((x*0.00013889)*0.0083) + tampungodo;
+         sim = ((x*0.00027778)*0.02333) + tampungodo;
+         //sim = ((x*0.00027778)*0.023334) + tampungodo;
+         odo = abs(sim);
 
+         //Calculate Milage
+         s = (sim - tampungodo)/z;
+
+        Serial.print("od.txt=\"");
+            Serial.print(String(odo));
+            Serial.print("\"");
+            Serial.write(0xff);
+            Serial.write(0xff);
+            Serial.write(0xff);
+
+            tampungodo = sim;
+        } */
+      /*  Serial.print(speed_val);
+        Serial.print(" , ");
+        //Serial.print(z);
+        //Serial.print(" , ");
+        Serial.print(abs(sim));
+        Serial.print(" , ");
+        Serial.print(abs(tampungodo));
+        //Serial.print(" , ");
+        //Serial.print(abs(s));
+        Serial.println();   */
+
+
+
+      //delay(4);
+      //wdt_reset();
     }
   }
+
 }
